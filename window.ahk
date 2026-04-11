@@ -593,6 +593,13 @@ class Window {
 	 *     -1 or less = All alt-tab windows.
 	 *      0 or Mouse = Windows on the monitor the mouse is currently on.
 	 *      1 to MonitorGetCount() = Windows on the specified monitor number.
+	 *
+	 * @param {Number} mon
+	 * @param {String} winTitle
+	 * @param {String} winText
+	 * @param {String} excludeTitle
+	 * @param {String} excludeText
+	 * @returns {Array}
      */
 	static GetAltTabList(mon := -1, winTitle?, winText?, excludeTitle?, excludeText?) {
 		hMonitor := DetermineMonitor(mon)

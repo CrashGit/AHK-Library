@@ -74,15 +74,13 @@ Window.GetNextOnMonitor := (this, MonitorToSwitchTo, activateThenSwitch := true,
  * @author iseahound
  * @modified crash
  * @source https://www.autohotkey.com/boards/viewtopic.php?f=83&p=566016#p566016
- * @param {string} z_order whether to use the most recent window or the previous window
- * @param {integer} monitor the monitor to cycle windows through, if not provided, uses the monitor the mouse is on
- * @param {bool} activate_first
+ * @param {String} z_order Whether to use the most recent window or the previous window.
+ * @param {Integer} monitor The monitor to cycle windows through, if not provided, uses the monitor the mouse is on.
+ * @param {Bool} activate_first Only cycles to new window if last found window is the active window.
  * Personal notes:
  *      The old method didn't activate fullscreen-exclusive apps (games).
  *      Turns out this one doesn't always work either for the above reason.
  *      Future me: this may not be related to games. This also fails sometimes for regular programs.
- *
- *      Has problems properly cycling if a window is AlwaysOnTop.
  */
 Window.FocusNext := (this, monitor := 0, activate_first := true) => this.__Focus('next', monitor, activate_first)
 Window.FocusPrev := (this, monitor := 0, activate_first := true) => this.__Focus('prev', monitor, activate_first)
@@ -143,14 +141,11 @@ Window.__Focus := (this, z_order, monitor, activate_first := false) {
     }
 
     GetNextIndex() {
-        switch {
-        case z_order != prev_order:
+        if z_order != prev_order {
             return GetRecentIndex()
-        case z < win_count:
-            return z + 1
-        default:
-            return z
         }
+
+        return z + (z < win_count)
     }
 
     GetRecentIndex() {
