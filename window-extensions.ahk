@@ -84,7 +84,7 @@ Window.GetNextOnMonitor := (this, MonitorToSwitchTo, activateThenSwitch := true,
  */
 Window.FocusNext := (this, monitor := 0, activate_first := true) => this.__Focus('next', monitor, activate_first)
 Window.FocusPrev := (this, monitor := 0, activate_first := true) => this.__Focus('prev', monitor, activate_first)
-Window.Focus     := (this, z_order, monitor := 0, activate_first := true) => this.__Focus(z_order, monitor, activate_first)
+Window.Focus     := Window.__Focus
 Window._OnFocus  := (*) => 0
 
 Window.OnFocusHandler := (this, Callback) {
@@ -141,7 +141,7 @@ Window.__Focus := (this, z_order, monitor, activate_first := false) {
     }
 
     GetNextIndex() {
-        if z_order != prev_order {
+        if z_order != prev_order || z > win_count {
             return GetRecentIndex()
         }
 
