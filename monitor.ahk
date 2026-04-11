@@ -56,7 +56,9 @@ class VirtualScreen {
     static bottom => this.height
 }
 
-WorkArea := Screen
+
+class WorkArea extends Screen {
+}
 class Screen extends Monitor {
     static coords := {}
     static __CoordsFunc => MonitorGetWorkArea

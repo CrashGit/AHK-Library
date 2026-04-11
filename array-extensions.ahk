@@ -19,13 +19,13 @@
 	Description:
 	A compilation of useful array methods.
 
-    Array.Slice(start:=1, end:=0, step:=1)  => Returns a section of the array from 'start' to 'end', 
+    Array.Slice(start:=1, end:=0, step:=1)  => Returns a section of the array from 'start' to 'end',
         optionally skipping elements with 'step'.
     Array.Swap(a, b)                        => Swaps elements at indexes a and b.
     Array.Map(func, arrays*)                => Applies a function to each element in the array.
     Array.ForEach(func)                     => Calls a function for each element in the array.
     Array.Filter(func)                      => Keeps only values that satisfy the provided function
-    Array.Reduce(func, initialValue?)       => Applies a function cumulatively to all the values in 
+    Array.Reduce(func, initialValue?)       => Applies a function cumulatively to all the values in
         the array, with an optional initial value.
     Array.IndexOf(value, start:=1)          => Finds a value in the array and returns its index.
     Array.Find(func, &match?, start:=1)     => Finds a value satisfying the provided function and returns the index.
@@ -374,13 +374,20 @@ class Array2 {
      * @returns {String}
      */
 
-	static Join(delim := ',') {
-		result := ''
-		for v in this {
-			result .= v delim
-        }
-		return (len := StrLen(delim)) ? SubStr(result, 1, -len) : result
-	}
+    static Join(delim := ',') {
+        placeholders    := Format('{:' this.length '}', '')             ; adds this.Length amount of spaces to a string
+        formatTemplate  := StrReplace(placeholders, ' ', '{}' . delim)  ; replace all spaces with {} Format variable placeholders
+        result          := Format(formatTemplate, this*)                ; place easy array value into string in order
+        return SubStr(result, 1, -StrLen(delim))                        ; remove last delimiter
+    }
+
+	; static Join(delim := ',') {
+	; 	result := ''
+	; 	for v in this {
+	; 		result .= v delim
+    ;     }
+	; 	return (len := StrLen(delim)) ? SubStr(result, 1, -len) : result
+	; }
 
     /**
      * Turns a nested array into a one-level array

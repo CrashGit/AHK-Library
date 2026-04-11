@@ -586,79 +586,149 @@ class Window {
 	 * @author ophthalmos - original
 	 * 		@source - https://www.autohotkey.com/boards/viewtopic.php?t=13288*
 	 *
+	 * @author crash - heavily modified
+	 *
 	 * @param {Integer} [mon = -1] The monitor to retrieve alt-tab windows from. There are 3 distinct values.
 	 * @values
-	 *     -1 = All alt-tab windows.
-	 *      0 = Windows on the monitor the mouse is currently on.
+	 *     -1 or less = All alt-tab windows.
+	 *      0 or Mouse = Windows on the monitor the mouse is currently on.
 	 *      1 to MonitorGetCount() = Windows on the specified monitor number.
      */
-	static AltTabWindows(mon := -1, winTitle?, winText?, excludeTitle?, excludeText?) {
-		static  WS_EX_APPWINDOW  := 0x40000,                                                    ; has a taskbar button
-				WS_EX_TOOLWINDOW := 0x80,                                                       ; does not appear on the Alt-Tab list
-				GW_OWNER         := 4                                                           ; identifies as the owner window
-
-		if mon > MonitorGetCount() {                                                    		; if monitor is invalid (0 is used to get monitor based on mouse position)
-			return []                                                                        	; return empty array
+	static GetAltTabList(mon := -1, winTitle?, winText?, excludeTitle?, excludeText?) {
+		hMonitor := DetermineMonitor(mon)
+		if !hMonitor {
+			return []
 		}
 
-		if mon = 0 {                                                                            ; if should use monitor mouse is on
-			DllCall('GetCursorPos', 'UInt64*', &point := 0)                                     ; get cursor position as point struct
-			hMonitor := DllCall('MonitorFromPoint', 'UInt64', point, 'UInt', 0x2, 'Ptr')        ; get monitor handle from point struct
-		} else if mon > 0 {                                                                     ; valid monitor
-			hMonitorList := ''                                                                  ; initialize list for monitor handles
-			if DllCall('EnumDisplayMonitors', 'Ptr', 0, 'Ptr', 0,                               ; enumerate monitors
-						'Ptr', CallbackCreate(EnumMonitors, 'Fast', 4), 'UInt', 0) {
-				loop parse hMonitorList, '`n' {                                                 ; loop through hMonitorList
-					if mon = A_Index {                                                          ; if monitor matches index
-						hMonitor := A_LoopField                                                 ; assign hMonitor to the monitor handle at that index
-						break                                                                   ; end early
+		DetectHiddenWindows(false)	; makes IsWindowVisible and DWMWA_CLOAKED unnecessary in subsequent call to WinGetList()
+		windows := WinGetList(winTitle?, winText?, excludeTitle?, excludeText?)
+		return GetValidWindows(windows)
+
+		GetValidWindows(windows) {
+			; Deprecated code I thought was needed, unless I find a reason it should exist.
+			; static  WS_EX_APPWINDOW  := 0x40000	; has a taskbar button
+			; if !(ex & WS_EX_APPWINDOW) {
+			; 	continue
+			; }
+			; if WinGetClass(hwnd) = 'ApplicationManager_ImmersiveShellWindow' {		; I think this is the Gaming Bar. Excluding Program from text had weird effects with Discord if there were more than 2 (including Discord) windows on that monitor
+			; 	continue
+			; }
+			static WS_EX_TOOLWINDOW := 0x80,
+				   GA_ROOTOWNER     := 3
+
+			AltTabList := []
+
+			for hwnd in windows {
+				if !HwndIsOnMonitor(hwnd) {
+					continue
+				}
+
+				owner := DllCall('GetAncestor', 'Ptr', hwnd, 'UInt', GA_ROOTOWNER, 'Ptr')
+				owner := owner || hwnd
+
+				if DllCall('GetLastActivePopup', 'Ptr', owner) != hwnd {
+					continue
+				}
+
+				ex := WinGetExStyle(hwnd)
+				; don't add window to list if any of these conditions are true
+				if !DllCall('IsWindowVisible', 'Ptr', hwnd)
+				|| (ex & WS_EX_TOOLWINDOW)
+				|| !IsWindowOnCurrentVirtualDesktop(hwnd)
+				|| !HasShowInSwitcherFlag(hwnd) {
+					continue
+				}
+
+				AltTabList.Push(hwnd)
+			}
+			return AltTabList
+		}
+
+		HwndIsOnMonitor(hwnd) {
+			result := mon < 0 || hMonitor = DllCall('MonitorFromWindow', 'Ptr', hwnd, 'UInt', 0x2, 'Ptr')
+			return result
+		}
+
+		IsWindowOnCurrentVirtualDesktop(hwnd) {
+			static IVirtualDesktopManager := ''
+
+			if !IVirtualDesktopManager {
+				IVirtualDesktopManager := ComObject(CLSID_VirtualDesktopManager := '{AA509086-5CA9-4C25-8F95-589D3C07B48A}', IID_IVirtualDesktopManager := '{A5CD92FF-29BE-454C-8D04-D82879FB3F1B}')
+			}
+
+			ComCall(3, IVirtualDesktopManager, 'UPtr', hwnd, 'Int*', &onCurrentDesktop := 0)   ;
+			return onCurrentDesktop
+		}
+
+		HasShowInSwitcherFlag(hwnd) {
+			static IApplicationViewCollection := GetIApplicationViewCollection()
+			try ComCall(GetViewForHwnd := 6, IApplicationViewCollection, 'UPtr', hwnd, 'Ptr*', &pView := 0)
+			pView ??= 0
+
+			if pView {
+				ComCall(GetShowInSwitchers := 27, pView, 'Int*', &ShowInSwitchers := 0)
+				ObjRelease(pView)
+			}
+			return ShowInSwitchers ?? 0
+
+			GetIApplicationViewCollection() {
+				OSbuildNumber := StrSplit(A_OSVersion, '.')[3]
+				if OSbuildNumber <= 17134 {   ; Windows 10 1607 to 1803 and Windows Server 2016
+					IID_IApplicationViewCollection := '{2C08ADF0-A386-4B35-9250-0FE183476FCC}'
+				} else {
+					IID_IApplicationViewCollection := '{1841C6D7-4F9D-42C0-AF41-8747538F10E5}'
+				}
+
+				CLSID_ImmersiveShell := '{C2F03A33-21F5-47FA-B4BB-156362A2F239}'
+				IID_IUnknown := '{00000000-0000-0000-C000-000000000046}'
+				ImmersiveShell := ComObject(CLSID_ImmersiveShell, IID_IUnknown)
+				return ComObjQuery(ImmersiveShell, IID_IApplicationViewCollection, IID_IApplicationViewCollection)
+			}
+		}
+
+
+		DetermineMonitor(mon) {
+			switch {
+			case mon = 0 || mon = 'Mouse':
+				return GetHMonitorFromMouse()
+			case mon > MonitorGetCount():
+				return false
+			case mon > 0:
+				return GetHMonitorFromMon()
+			default:
+				return true
+			}
+
+			GetHMonitorFromMouse() {
+				DllCall('GetCursorPos', 'UInt64*', &point := 0)                         ; get cursor position as point struct
+				return DllCall('MonitorFromPoint', 'UInt64', point, 'UInt', 0x2, 'Ptr') ; return monitor handle from point struct
+			}
+
+			GetHMonitorFromMon() {
+				hMonitorList := ''                                                      ; initialize list for monitor handles
+
+				if EnumerateDisplays() {
+					loop parse hMonitorList, '`n' {                                     ; loop through hMonitorList
+						if mon = A_Index {                                              ; if monitor matches index
+							return A_LoopField                                          ; hMonitor to the monitor handle at that index
+						}
 					}
 				}
-			}
 
-			EnumMonitors(hMonitor, *) {                                                         ; used as callback to add monitor handles to hMonitorList
-				hMonitorList .= hMonitor '`n'                                                   ; add monitor handle to list and newline
-				return true                                                                     ; return true (necessary for callback)
-			}
-		}
+				EnumerateDisplays() {
+					return DllCall('EnumDisplayMonitors',
+							'Ptr', 0,
+							'Ptr', 0,
+							'Ptr', CallbackCreate(EnumSuccessfulCallback, 'Fast', 4),
+							'UInt', 0)
+				}
 
-		AltTabList := []                                                                        ; initialize array that saves all windows
-		DetectHiddenWindows(false)                                                              ; makes IsWindowVisible and DWMWA_CLOAKED unnecessary in subsequent call to WinGetList()
-
-		for hwnd in WinGetList(winTitle?, winText?, excludeTitle?, excludeText?) {				; gather a list of running programs
-			if WinGetClass(hwnd) = 'ApplicationManager_ImmersiveShellWindow' {					; I think this is the Gaming Bar. Excluding Program from text had weird effects with Discord if there were more than 2 (including Discord) windows on that monitor
-				continue
-			}
-
-			if mon < 0 ||
-				hMonitor = DllCall('MonitorFromWindow', 'Ptr', hwnd, 'UInt', 0x2, 'Ptr') {      ; Check if the window is on the same monitor.
-				owner := DllCall('GetAncestor', 'Ptr', hwnd, 'UInt', GA_ROOTOWNER := 3, 'Ptr')  ; get window owner
-				owner := owner || hwnd                                                          ; use owner handle else use window handle
-
-				if DllCall('GetLastActivePopup', 'Ptr', owner) = hwnd {                         ; make sure that the active window is also the owner window (GetLastActivePopup: determines which pop-up window owned by the specified window was most recently active)
-					ex := WinGetExStyle(hwnd)                                                   ; get window extended style
-
-					if !DllCall('IsWindowVisible', 'Ptr', hwnd) {
-						continue
-					}
-
-					if ex & WS_EX_TOOLWINDOW {
-						continue
-					}
-					; if (ex & WS_EX_TOOLWINDOW) || !(ex & WS_EX_APPWINDOW) {
-					; 	continue
-					; }
-
-					if WinGetTitle(hwnd) = '' {
-						continue
-					}
-
-					AltTabList.Push(hwnd)                                                   	; save window
+				EnumSuccessfulCallback(hMonitor, *) {                                	; used as callback to add monitor handles to hMonitorList
+					hMonitorList .= hMonitor '`n'                                       ; add monitor handle to list and newline
+					return true                                                         ; return true (necessary for callback)
 				}
 			}
 		}
-
-		return AltTabList                                                                       ; return list of windows
 	}
 
 

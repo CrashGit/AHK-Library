@@ -153,6 +153,9 @@ GetColorLuminance(color) {
     return  (r * 0.299 + g * 0.587 + b * 0.114)
 }
 
+RGBToBrightness(r, g, b) {
+    return sqrt(0.299 * R ** 2 + 0.587 * G ** 2 + 0.114 * B ** 2)
+}
 
 /**
  * @author @skan
@@ -545,8 +548,8 @@ GetRunningScripts() {
 ;============================================================================================
 ; @Add_a_Progress_Bar_to_Simulate_Progress
 ;============================================================================================
-AddProgressBar(text, use_timer := false) {
-    use_timer ? SetTimer(ShowProgressBar, -1) : ShowProgressBar()   ; timer version allows the progress bar to show up along-side whatever you're doing
+AddProgressBar(text, async := false) {
+    async ? SetTimer(ShowProgressBar, -1) : ShowProgressBar()   ; timer version allows the progress bar to show up along-side whatever you're doing
 
     ShowProgressBar() {
         ProgressGui := Gui('+AlwaysOnTop -SysMenu +ToolWindow -Caption -Border')
@@ -1515,8 +1518,8 @@ XOR_MissingNumber(arr1, arr2) {
 ; randomValue := Random(1, 100)
 ; someArray.Push(randomValue)
 ; RandomArrayOfNumbers := RandomizeArray(someArray)
-; MsgBox(XOR_DuplicateNumber(RandomArrayOfNumbers, 1, 100))
-XOR_DuplicateNumber(arr, min := 1, max := 100) {
+; MsgBox(XOR_FindDuplicateNumber(RandomArrayOfNumbers, 1, 100))
+XOR_FindDuplicateNumber(arr, min := 1, max := 100) {
     local x := 0
     loop max - min + 1 {
         x ^= (min + A_Index - 1)
@@ -1529,7 +1532,8 @@ XOR_DuplicateNumber(arr, min := 1, max := 100) {
 }
 
 ; @returns new array
-RandomizeArray(arr) {
+; *slightly* faster than in-place version
+RandomizeNewArray(arr) {
     temp := []
     loop arr.length {
         temp.Push(A_Index)
@@ -1544,6 +1548,20 @@ RandomizeArray(arr) {
     }
 
     return newArray
+}
+
+; in-place randomization
+RandomizeArray(arr) {
+    len := arr.Length
+    loop len-1 {
+        Swap(A_Index, Random(A_Index, len))
+    }
+
+    Swap(a, b) {
+        temp := arr[b]
+        arr[b] := arr[a]
+        arr[a] := temp
+    }
 }
 
 /**
@@ -1592,4 +1610,161 @@ GetProgramName(path) {
     ;     CompanyName:   Query("CompanyName"),
     ;     OriginalFilename: Query("OriginalFilename")
     ; }
+}
+
+/**
+ * @plankoe @swagfag
+ * @source https://old.reddit.com/r/AutoHotkey/comments/11dnz2l/enumerating_via_for_key_value_in_var_out_of/jaaknw6/
+ */
+class OrderedMap extends Map {
+    __New(KVPairs*) {
+        super.__New(KVPairs*)
+        KeyArray := []
+        keyCount := KVPairs.Length // 2
+        KeyArray.Length := keyCount
+        Loop keyCount
+            KeyArray[A_Index] := KVPairs[(A_Index << 1) - 1]
+        this.KeyArray := KeyArray
+    }
+
+    __Item[key] {
+        set {
+            if !this.Has(key)
+                this.KeyArray.Push(key)
+            super[key] := value
+        }
+    }
+
+    Clear() {
+        super.Clear()
+        this.KeyArray := []
+    }
+
+    Clone() {
+        Other := super.Clone()
+        Other.KeyArray := this.KeyArray.Clone()
+        return Other
+    }
+
+    Delete(key) {
+        try {
+            RemovedValue := super.Delete(key)
+            CaseSense := this.CaseSense
+            for i, Element in this.KeyArray {
+                areSame := (Element is String)
+                    ? !StrCompare(Element, key, CaseSense)
+                    : (Element = key)
+                if areSame {
+                    this.KeyArray.RemoveAt(i)
+                    break
+                }
+            }
+            return RemovedValue
+        }
+        catch UnsetItemError as Err
+            throw UnsetItemError(Err.Message, -1, Err.Extra)
+    }
+
+    Set(KVPairs*) {
+        if (KVPairs.Length & 1)
+            throw ValueError('Invalid number of parameters.', -1)
+        KeyArray := this.KeyArray
+        keyCount := KVPairs.Length // 2
+        KeyArray.Capacity += keyCount
+        Loop keyCount {
+            key := KVPairs[(A_Index << 1) - 1]
+            this.Has(key) || KeyArray.Push(key)
+        }
+        super.Set(KVPairs*)
+        return this
+    }
+
+    __Enum(*) {
+        keyEnum := this.KeyArray.__Enum(1)
+        return (&key?, &val?) => (
+            keyEnum(&key) ? (val := this[key], true) : false
+        )
+    }
+}
+
+
+; Sorting
+MergeSort(arr) {
+    length := arr.length
+
+    if length = 1 {
+        return arr
+    }
+
+    midPoint := length // 2
+    arr1 := []
+    arr2 := []
+
+    loop midPoint {
+        arr1.Push(arr[A_Index])
+    }
+    loop length - midPoint {
+        arr2.Push(arr[A_Index+midPoint])
+    }
+
+    leftHalf  := MergeSort(arr1)
+    rightHalf := MergeSort(arr2)
+
+    return Merge(leftHalf, rightHalf)
+
+    Merge(left, right) {
+        output := []
+        i := j := 1
+        leftLength  := left.Length
+        rightLength := right.Length
+
+        while i <= leftLength && j <= rightLength {
+            if left[i] <= right[j] {
+                output.Push(left[i])
+                i += 1
+            } else {
+                output.Push(right[j])
+                j += 1
+            }
+        }
+
+        while i <= leftLength {
+            output.Push(left[i])
+            i++
+        }
+        while j <= rightLength {
+            output.Push(right[j])
+            j++
+        }
+
+        return output
+    }
+}
+
+
+/**
+ * @returns {Array(Objects)} Returns an array of objects that for each program on the taskbar.
+ * @returns {[{name: x, path: y}]}
+ */
+GetPinnedTaskbarApps() {
+    pinnedApps := []
+
+    try {
+        taskbandPath := A_AppData "\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar"
+
+        if DirExist(taskbandPath) {
+            loop Files, taskbandPath "\*.lnk" {
+                pinnedApps.Push({
+                    name: SubStr(A_LoopFileName, 1, -4),
+                    path: A_LoopFileFullPath
+                })
+            }
+        } else {
+            MsgBox("Directory doesn't exist: " taskbandPath)
+        }
+    } catch error as e {
+        MsgBox("Error: " e.What " - " e.Extra)
+    }
+
+    return pinnedApps
 }

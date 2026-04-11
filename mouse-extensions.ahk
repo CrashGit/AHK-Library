@@ -543,7 +543,6 @@ Mouse.Layer._layer := Map(
     5, 'AltTab Per Monitor',
 )
 Mouse.Layer.resizeLockState  := 0        ; state of cursor lock when resizing window
-Mouse.Layer.navigation       := false    ; state of mouse cursor navigation
 
 /**
  * @getters @setters

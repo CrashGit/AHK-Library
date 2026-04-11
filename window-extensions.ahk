@@ -34,7 +34,6 @@ Window.GetNextOnMonitor := (this, MonitorToSwitchTo, activateThenSwitch := true,
     windowFound := activateThenSwitch                               ; used to keep track of a found window
     prevId := 0                                                     ; saves id of window found on monitor in case it needs to be activated
 
-
     for id in ids {                                                 ; loop through windows
         if Window.IsException(id) {                                 ; if exception is found, skip
             continue
@@ -64,7 +63,6 @@ Window.GetNextOnMonitor := (this, MonitorToSwitchTo, activateThenSwitch := true,
             break                                                   ; done
         }
 
-
         if A_Index = ids.Length and windowFound {                   ; if last window in list that wasn't found on identifier monitor and a previous window was, activate that previous window
             try WinActivate(prevId)                                 ; i.e. if only one window on monitor is found, activate it
         }
@@ -83,6 +81,8 @@ Window.GetNextOnMonitor := (this, MonitorToSwitchTo, activateThenSwitch := true,
  *      The old method didn't activate fullscreen-exclusive apps (games).
  *      Turns out this one doesn't always work either for the above reason.
  *      Future me: this may not be related to games. This also fails sometimes for regular programs.
+ *
+ *      Has problems properly cycling if a window is AlwaysOnTop.
  */
 Window.FocusNext := (this, monitor := 0, activate_first := true) => this.__Focus('next', monitor, activate_first)
 Window.FocusPrev := (this, monitor := 0, activate_first := true) => this.__Focus('prev', monitor, activate_first)
@@ -94,88 +94,110 @@ Window.OnFocusHandler := (this, Callback) {
 }
 
 
-Window.__Focus := (this, z_order, mon, activate_first := false) {
-    static past := ''                                                                           ; saves the last z_order parameter passed
-    static z := 0                                                                               ; saves the last z_order (use past to initialize)
+Window.__Focus := (this, z_order, monitor, activate_first := false) {
+    static prev_order := ''
+    static z := 0
     debug := false
-    Tooltip()                                                                                   ; reset Tooltip.
+    Tooltip()
 
-    windows := Window.AltTabWindows(mon)                                                        ; gather Alt-Tab window list
+    windows := Window.GetAltTabList(monitor)
+    win_count := windows.length
 
-    if (windows.length == 0) {                                                                  ; if no windows are found
-        return 0                                                                                ; return 0
+    switch win_count {
+    case 0: return 0
+    case 1: return ActivateWindow(windows[1])
     }
 
-    if (windows.length == 1) {                                                                  ; if only one window is found
-        return ActivateWindow(windows[1])                                                       ; activate that window and return hwnd
+    always_on_top := GetAlwaysOnTopCount()
+
+    if (win_count - always_on_top) < 2 {
+        return ActivateWindow(windows[-1])
     }
 
-    always_on_top := 0                                                                          ; initialize always_on_top
-    for hwnd in windows {                                                                       ; loop through windows
-        if 0x8 & WinGetExStyle(hwnd) {                                                          ; if AlwaysOnTop
-            always_on_top += 1                                                                  ; increase always_on_top
-        }
+    if z_order = 'prev' {
+        z := GetRecentIndex()
+    } else if z_order = 'next' {
+        z := GetNextIndex()
+    } else if z_order ~= '^-?\d+$' {
+        z := z_order
     }
 
-    if (windows.length - always_on_top < 2) {                                                   ; if less than 2 normal windows
-        return ActivateWindow(windows[-1])                                                      ; activate last window: AlwaysOnTop windows are listed first. return hwnd
+    if debug {
+        return DebugTooltip()
     }
 
-    if (z_order = 'prev') {                                                                     ; if z_order is prev
-        Recent()                                                                                ; get most recent window on monitor
+    prev_order := z_order
+    hwnd := windows[z]
+
+    ; if window on monitor should be set active before focusing next window
+    if activate_first {
+        ActivateFirstWindowOnNewMonitor()
     }
 
-    if z_order = 'next' {                                                                       ; iterate through all the windows in a circular loop
-        switch {
-        case z_order != past || z > windows.length:                                             ; if different z_order is requested or z index > amount of windows
-            Recent()                                                                            ; get recent window
-        case z_order ~= '^-?\d+$':                                                              ; if z is a number (can address elements in reverse: [-1] is the bottom element)
-            z := z_order                                                                        ; set z index to that number
-        case z < windows.length:                                                                ; if z index is less than amount of windows
-            z++                                                                                 ; increase z index
-        }
-    }
-
-    if debug {                                                                                  ; debug unexpected issues
-        result := ''
-        for i, v in windows {
-            result .= i ', ' (WinGetTitle(v) || WinGetClass(v)) '`n'
-        }
-        return ToolTip(result)
-    }
-
-    past := z_order                                                                             ; save z order
-    hwnd := windows[z]                                                                          ; get hwnd
-
-    if activate_first {                                                                         ; if window on monitor should be set active before focusing next window
-        first_window_found := windows[1]                                                        ; get first window on monitor
-        if !WinActive('ahk_id' first_window_found) {                                            ; if not active
-            hwnd := first_window_found                                                          ; change hwnd to first window to activate
-        }
-    }
-
-    return ActivateWindow(hwnd)                                                                 ; activate window and perform any user-defined callback
+    return ActivateWindow(hwnd)
 
     ActivateWindow(hwnd) {
-        WinActivate('ahk_id' hwnd)                                                              ; activate window
-        this._OnFocus(hwnd)                                                                     ; invoke user-defined callback
-        return hwnd                                                                             ; return hwnd of window activated
+        WinActivate('ahk_id' hwnd)
+        this._OnFocus(hwnd)
+        return hwnd
     }
 
-    Recent() {                                                                                  ; switches to the most recent window. Ignores always on top windows
-        loop windows.length {                                                                   ; search for the window that is next in the z_order after the current active window
-            z := A_Index + 1                                                                    ; increase z index
-        } until (WinActive('A') = windows[A_Index])                                             ; until active window = id found in windows array
+    GetNextIndex() {
+        switch {
+        case z_order != prev_order:
+            return GetRecentIndex()
+        case z < win_count:
+            return z + 1
+        default:
+            return z
+        }
+    }
 
-        if z > windows.length {                                                                 ; if the current window is not in the list, such as the desktop or another monitor...
-            loop windows.length {                                                               ; search windows again
-                z := A_Index + 1                                                                ; increase z index
-            } until !(0x8 & WinGetExStyle(windows[A_Index]))                                    ; until a window is found that isn't AlwaysOnTop
+    GetRecentIndex() {
+        ; search for the window that is next in the z_order after the current active window
+        active_window := WinActive('A')
+        loop win_count {
+            index := A_Index + 1
+        } until (active_window = windows[A_Index])
+
+        ; if z index is out of bounds, loop back to first normal window
+        if index > win_count {
+            index := always_on_top + 1
         }
 
-        if (z > windows.length) {                                                               ; cases where there are 0 windows or 1 window are caught in the beginning
-            debug := true                                                                       ; set debug to true in case error was found
+        ; if z-index is still greater than window list
+        if (index > win_count) {
+            debug := true
         }
+
+        return index
+    }
+
+    GetAlwaysOnTopCount() {
+        local always_on_top := 0
+        for hwnd in windows {
+            if 0x8 & WinGetExStyle(hwnd) {
+                always_on_top += 1
+            }
+        }
+
+        return always_on_top
+    }
+
+    ActivateFirstWindowOnNewMonitor() {
+        first_window_found := windows[1 + always_on_top]    ; get first window on monitor that isn't AlwaysOnTop
+        if !WinActive('ahk_id' first_window_found) {
+            hwnd := first_window_found
+        }
+    }
+
+    DebugTooltip() {
+        result := ''
+        for i, v in windows {
+            info := Format('{}. {} - {}`n', i, (WinGetTitle(v) || WinGetClass(v)), v)
+            result .= info
+        }
+        return ToolTip(result)
     }
 }
 
@@ -689,7 +711,7 @@ Window.Prototype.FillEmptySpace := (this, x?, y?) {
     mon := Monitor.FromPoint(x, y)
     MonitorGetWorkArea(mon, &left, &top, &right, &bottom)
 
-    list := Window.AltTabWindows(mon,,, this.title)
+    list := Window.GetAltTabList(mon,,, this.title)
 
     for hwnd in list {
         win := Window(hwnd)
@@ -729,7 +751,7 @@ Window.Prototype.__FindNearestDistances := (this, horizontal, vertical) {
     }
 
     mon  := Monitor.FromWindow(this.hwnd)
-    list := Window.AltTabWindows(mon,,, this.title)
+    list := Window.GetAltTabList(mon,,, this.title)
 
     MonitorGetWorkArea(mon,,, &originalDist)
     minDistH := originalDist
