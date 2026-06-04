@@ -364,12 +364,12 @@ class Window {
 		return this
 	}
 
-	MoveTop() {
+	MoveToTop() {
 		WinMoveTop(this.criteria*)
 		return this
 	}
 
-	MoveBottom() {
+	MoveToBottom() {
 		WinMoveBottom(this.criteria*)
 		return this
 	}
@@ -620,9 +620,7 @@ class Window {
 			; if WinGetClass(hwnd) = 'ApplicationManager_ImmersiveShellWindow' {		; I think this is the Gaming Bar. Excluding Program from text had weird effects with Discord if there were more than 2 (including Discord) windows on that monitor
 			; 	continue
 			; }
-			static WS_EX_TOOLWINDOW := 0x80,
-				   GA_ROOTOWNER     := 3
-
+			static WS_EX_TOOLWINDOW := 0x80
 			AltTabList := []
 
 			for hwnd in windows {
@@ -630,14 +628,8 @@ class Window {
 					continue
 				}
 
-				owner := DllCall('GetAncestor', 'Ptr', hwnd, 'UInt', GA_ROOTOWNER, 'Ptr')
-				owner := owner || hwnd
-
-				if DllCall('GetLastActivePopup', 'Ptr', owner) != hwnd {
-					continue
-				}
-
 				ex := WinGetExStyle(hwnd)
+
 				; don't add window to list if any of these conditions are true
 				if !DllCall('IsWindowVisible', 'Ptr', hwnd)
 				|| (ex & WS_EX_TOOLWINDOW)
@@ -648,8 +640,10 @@ class Window {
 
 				AltTabList.Push(hwnd)
 			}
+
 			return AltTabList
 		}
+
 
 		HwndIsOnMonitor(hwnd) {
 			result := mon < 0 || hMonitor = DllCall('MonitorFromWindow', 'Ptr', hwnd, 'UInt', 0x2, 'Ptr')

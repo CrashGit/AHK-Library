@@ -154,7 +154,7 @@ GetColorLuminance(color) {
 }
 
 RGBToBrightness(r, g, b) {
-    return sqrt(0.299 * R ** 2 + 0.587 * G ** 2 + 0.114 * B ** 2)
+    return sqrt(0.299 * r ** 2 + 0.587 * g ** 2 + 0.114 * b ** 2)
 }
 
 /**
@@ -883,8 +883,7 @@ ToolTipKeyStates(keys*) {
 
 RepeatKeyPress(repeat_rate := 35, key?) {
     ThisHotkey := StripHotkey()                                                         ; remove modifiers from hotkey
-    key  := key ?? ThisHotkey                                                           ; if key wasn't supplied, use ThisHotkey
-    vksc := GetVKSC(key)                                                                ; get vk and sc
+    vksc := GetVKSC(key ?? ThisHotkey)                                                  ; get vk and sc
 
     SetTimer(SendKey, repeat_rate)                                                      ; start timer
     KeyWait(ThisHotkey)                                                                 ; wait for key to be released to not
@@ -896,17 +895,183 @@ GetVKSC(key) => Format('vk{:x}sc{:x}', GetKeyVK(key), GetKeySC(key))
 
 
 TaskbarToggleVisibility() {
-    static state := false, ABM_SETSTATE := 0xA, ABS_AUTOHIDE := 0x1, ABS_ALWAYSONTOP := 0x2
-    APPBARDATA := Buffer(size := 2*A_PtrSize + 2*4 + 16 + A_PtrSize, 0), state ^= 1
-    NumPut('UInt', size, APPBARDATA), NumPut('Ptr', WinExist('ahk_class Shell_TrayWnd'), APPBARDATA, A_PtrSize)
+    static ABM_SETSTATE := 0xA, ABS_AUTOHIDE := 0x1, ABS_ALWAYSONTOP := 0x2
+    local size := (2 * A_PtrSize) + (2 * 4) + 16 + A_PtrSize
+
+    local APPBARDATA := __GetTaskbarBarData()
+    state := !GetTaskbarState()
     NumPut('UInt', state ? ABS_AUTOHIDE : ABS_ALWAYSONTOP, APPBARDATA, size - A_PtrSize)
     DllCall('Shell32\SHAppBarMessage', 'UInt', ABM_SETSTATE, 'Ptr', APPBARDATA)
 }
 
+GetTaskbarState(APPBARDATA?) {
+    static ABM_GETSTATE := 0x4
+    APPBARDATA ??= __GetTaskbarBarData()
+    return DllCall('Shell32\SHAppBarMessage', 'UInt', ABM_GETSTATE, 'Ptr', APPBARDATA)
+}
 
-;============================================================================================
+__GetTaskbarBarData() {
+    local taskbar := 'ahk_class Shell_TrayWnd'
+    local size := (3 * A_PtrSize) + 24
+    local APPBARDATA := Buffer(size, 0)
+    NumPut('UInt', size, APPBARDATA)
+    NumPut('Ptr', WinExist(taskbar), APPBARDATA, A_PtrSize)
+    return APPBARDATA
+}
+
+/**
+ * @returns {Array(Objects)} Returns an array of objects that for each program on the taskbar.
+ * @returns {[{name: x, path: y}]}
+ */
+GetPinnedTaskbarApps() {
+    pinnedApps := []
+
+    try {
+        taskbandPath := A_AppData "\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar"
+
+        if DirExist(taskbandPath) {
+            loop files, taskbandPath "\*.lnk" {
+                pinnedApps.Push({
+                    name: SubStr(A_LoopFileName, 1, -4),
+                    path: A_LoopFileFullPath
+                })
+            }
+        } else {
+            MsgBox("Directory doesn't exist: " taskbandPath)
+        }
+    } catch error as e {
+        MsgBox("Error: " e.What " - " e.Extra)
+    }
+
+    return pinnedApps
+}
+
+; Not finished. instance approach is less appealing now that I know I can't hide specific taskbars.
+; Probably make methods static, but unsure what to do as a whole.
+class Taskbar {
+    static ABM_GETSTATE     := 0x4
+    static ABM_SETSTATE     := 0xA
+    static ABS_AUTOHIDE     := 0x1
+    static ABS_ALWAYSONTOP  := 0x2
+    static APPBAR_SIZE      := (3 * A_PtrSize) + 24
+
+
+    GetState() {
+        APPBARDATA := this.__GetAppBarData()
+        return DllCall('Shell32\SHAppBarMessage', 'UInt', Taskbar.ABM_GETSTATE, 'Ptr', APPBARDATA)
+    }
+
+    SetState(state) {
+        APPBARDATA := this.__GetAppBarData()
+        NumPut('UInt', state ? Taskbar.ABS_AUTOHIDE : Taskbar.ABS_ALWAYSONTOP, APPBARDATA, Taskbar.APPBAR_SIZE - A_PtrSize)
+        DllCall('Shell32\SHAppBarMessage', 'UInt', Taskbar.ABM_SETSTATE, 'Ptr', APPBARDATA)
+    }
+
+    Toggle() {
+        this.SetState(!this.GetState())
+    }
+
+    __GetAppBarData() {
+        local APPBARDATA := Buffer(Taskbar.APPBAR_SIZE, 0)
+        NumPut('UInt', Taskbar.APPBAR_SIZE, APPBARDATA)
+        NumPut('Ptr', WinExist(this.hwnd), APPBARDATA, A_PtrSize)
+        return APPBARDATA
+    }
+
+    /**
+     * @param {Integer} monitor defaults to primary
+     */
+    __New(monitor := 1) {
+        if monitor = 1 {
+            this.hwnd := WinExist('ahk_class Shell_TrayWnd')
+            return
+        }
+
+        for hwnd in WinGetList('ahk_class Shell_SecondaryTrayWnd') {
+            monitorFound := Taskbar.GetMonitorFromTaskbar(hwnd)
+
+            if monitorFound = monitor {
+                this.hwnd := hwnd
+                return
+            }
+        }
+
+        this.hwnd := 0
+    }
+
+
+    /**
+     * @returns {Array(Objects)} Returns an array of objects that for each program on the taskbar.
+     * @returns {[{name: x, path: y}]}
+     */
+    static GetPinnedApps() {
+        pinnedApps := []
+
+        try {
+            taskbandPath := A_AppData '\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar'
+
+            if DirExist(taskbandPath) {
+                loop files, taskbandPath '\*.lnk' {
+                    pinnedApps.Push({
+                        name: SubStr(A_LoopFileName, 1, -4),
+                        path: A_LoopFileFullPath
+                    })
+                }
+            } else {
+                MsgBox('Directory does not exist: ' taskbandPath)
+            }
+        } catch error as e {
+            MsgBox('Error: ' e.What ' - ' e.Extra)
+        }
+
+        return pinnedApps
+    }
+
+    static GetMonitorFromTaskbar(winTitle?, winText?, excludeTitle?, excludeText?) {
+        handle := Taskbar.GetHandleFromWindow(winTitle?, winText?, excludeTitle?, excludeText?)
+        return Taskbar.NumberFromHandle(handle)
+    }
+
+    static GetHandleFromWindow(winTitle?, winText?, excludeTitle?, excludeText?) {
+        ; MONITOR_DEFAULTTONULL = 0
+        ; MONITOR_DEFAULTTOPRIMARY = 1
+        ; MONITOR_DEFAULTTONEAREST = 2
+        return DllCall('MonitorFromWindow', 'Ptr', WinExist(winTitle?, winText?, excludeTitle?, excludeText?), 'UInt', 2)   ; get monitor handle from window specified
+    }
+
+     static NumberFromHandle(handle) {                           ; convert handle to monitor number and return it
+        list := this.__GetMonitorHandleList()
+        loop parse, list, '`n' {                                ; loop list of monitor handle numbers
+            if A_LoopField = handle {                           ; if the handle number matches the monitor handle specified
+                return A_Index                                  ; return that index
+            }
+        }
+        throw Error('Monitor not found.')
+    }
+
+     static __GetMonitorHandleList() {
+        monHandleList := ''
+        monCallback := CallbackCreate(EnumMonitors, 'Fast', 4)  ; fast-mode, 4 parameters
+
+        if this.EnumerateDisplays(monCallback) {                ; enumerates all monitors
+            monHandleList := SubStr(monHandleList, 1, -1)       ; remove last newline character
+            CallbackFree(monCallback)                           ; free callback from memory
+            return monHandleList                                ; return list
+        }
+
+        EnumMonitors(hMonitor, hDevCon, pRect, args) {          ; callback function for enumeration DLL
+            monHandleList .= hMonitor '`n'                      ; add monitor handle number to list
+            return true                                         ; continues enumeration
+        }
+    }
+
+    static EnumerateDisplays(callback) => DllCall('EnumDisplayMonitors', 'Ptr', 0, 'Ptr', 0, 'Ptr', callback, 'UInt', 0)
+}
+;
+
+; ============================================================================================
 ; @Measure_Function_in_ms
-;============================================================================================
+; ============================================================================================
 MeasureFunction(Callback, iterations := 1) {
     DllCall('QueryPerformanceFrequency', 'Int64*', &freq := 0)
     DllCall('QueryPerformanceCounter', 'Int64*', &counterBefore := 0)
@@ -1742,29 +1907,184 @@ MergeSort(arr) {
 }
 
 
-/**
- * @returns {Array(Objects)} Returns an array of objects that for each program on the taskbar.
- * @returns {[{name: x, path: y}]}
- */
-GetPinnedTaskbarApps() {
-    pinnedApps := []
+; class Color {
+;     __New(color, g?, b?) {
+;         this.Parse(color, g?, b?)
+;     }
 
-    try {
-        taskbandPath := A_AppData "\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar"
+;     Parse(color, g?, b?) {
+;         return IsRGB()
+;             || Is0xRGB()
+;             || Is0xARGB()
+;             || IsRGBString()
+;             || throw(Error('Invalid color passed.'))
 
-        if DirExist(taskbandPath) {
-            loop Files, taskbandPath "\*.lnk" {
-                pinnedApps.Push({
-                    name: SubStr(A_LoopFileName, 1, -4),
-                    path: A_LoopFileFullPath
-                })
-            }
-        } else {
-            MsgBox("Directory doesn't exist: " taskbandPath)
-        }
-    } catch error as e {
-        MsgBox("Error: " e.What " - " e.Extra)
-    }
+;         IsRGB() {         ; 255, 255, 255
+;             if IsSet(g) {
+;                 if !IsSet(b) {
+;                     throw Error('Missing color: Blue')
+;                 } else {
+;                     this._color := {r: color, g: g, b: b}
+;                     this._format := 'RGB'
+;                     return true
+;                 }
+;             } else if IsSet(b) {
+;                 throw Error('Missing color: Green')
+;             }
+;         }
 
-    return pinnedApps
-}
+;         Is0xRGB() {       ; 0xFF0033
+
+;         }
+
+;         Is0xARGB() {      ; 0xFFFF0033
+
+;         }
+
+;         IsRGBString() {   ; 'FF0033' or 'cFF0033'
+;             if !(color is String) {
+;                 return
+;             }
+
+;             if SubStr(color, 1) = 'c' {
+;                 color := SubStr(color, 2)
+;             }
+
+;             if StrLen(color) != 6 {                            ; if it's a hex string (not a raw number)
+;                 return
+;             }
+
+;             this._color := color
+;             this._format := 'RGBString'
+;             return true
+;         }
+;     }
+
+;     To0xRGB() {
+
+;     }
+
+;     /**
+;      * @param {hex} @color1
+;      * @param {hex} @color2
+;      * @returns {}
+;      * @example
+;      * if CompareColors(0x1f1f24, 0x1f1f28) < 10 {
+;      *     ; do something
+;      * }
+;      */
+;     CompareTo(color) => Abs(color - this._color)
+
+;     /**
+;      * Returns the colors black or white, depending on the color passed.
+;      * It chooses based on what color should have better visibility against the given color.
+;      * @param backgroundColor
+;      * @returns {Integer 0xARGB}
+;      */
+;     static GetContrastingHexColor(color) {
+;         r := (color >> 16) & 0xFF
+;         g := (color >> 8)  & 0xFF
+;         b := color & 0xFF
+
+;         brightness := GetColorLuminance(color)
+
+;         return brightness < 128 ? 0xFFFFFFFF : 0xFF000000  ; white text for dark backgrounds, black for light
+;     }
+
+;     /**
+;      * Takes a color of type string or RGB and converts it to ARGB
+;      * @param color
+;      * @returns {Integer | Number | String}
+;      */
+;     static StringToHex(color) {
+;         switch StrLen(color) {                      ; check string length
+;         case 6:     return Integer('0xFF' . color)  ; if 6 numbers
+;         case 8:     return Integer('0x' color)      ; if 8 numbers
+;         case 10:    return Integer(color)           ; if 10 numbers
+;         default:    return color                    ; otherwise, return it as is
+;         }
+;     }
+
+;     static RGBtoARGB(color) {
+;         color := color & 0xFFFFFFFF
+;         return color | 0xFF000000
+;         return Number('0x' Format('{:02X}{:02X}{:02X}', r & 0xFF, g & 0xFF, b & 0xFF))
+;     }
+
+;     static EnsureHexHasAlpha(color) {
+;         if !((color >> 24) & 0xFF000000) {          ; if no alpha (full transparency)
+;             return color & 0x00FFFFFF | 0x01000000  ; add 1 alpha
+;         }
+;         return color
+;     }
+
+;     static HexToString(color) {
+;         return Format('{:08X}', color & 0xFFFFFFFF)
+;     }
+
+;     /**
+;      * @description
+;      * Expects an 0xARGB color that will automatically brighten or darken depending on whether it is already considered bright or dark.
+;      * This function was created with the intent of highlighting something. So if there was a gui element I wanted to accentuate,
+;      *      I could pass that color to this function and it would automatically return a brighter or darker version.
+;      * @param color
+;      * @returns {Number 0xARGB}
+;      */
+;     static ColorBrightnessAutoAdjust(color, offset := 60) {
+;         r := (color >> 16) & 0xFF
+;         g := (color >> 8) & 0xFF
+;         b := color & 0xFF
+
+;         ; standard luminance formula
+;         brightness := GetColorLuminance(color)
+
+;         if (brightness > 170) {     ; if color is already bright, use a dark highlight
+;             r := Max(0, r - offset)
+;             g := Max(0, g - offset)
+;             b := Max(0, b - offset)
+;         } else {                    ; if color is dark, brighten it
+;             r := Min(255, r + offset)
+;             g := Min(255, g + offset)
+;             b := Min(255, b + offset)
+;         }
+
+;         return (0xFF << 24) | (r << 16) | (g << 8) | b  ; keep full opacity
+;     }
+
+;     /**
+;      * @description
+;      * Expects an 0xARGB color and an amount to adjust the color.
+;      * Positive values increase color brightness. Negative decrease color brightness.
+;      * @param color
+;      * @param offset
+;      * @returns {Number 0xARGB}
+;      */
+;     static ColorBrightnessAdjust(color, offset := 60) {
+;         ; extract ARGB components
+;         a := (color >> 24) & 0xFF
+;         r := ((color >> 16) & 0xFF) + offset
+;         g := ((color >> 8) & 0xFF) + offset
+;         b := (color & 0xFF) + offset
+
+;         ; clamp values
+;         r := Max(0, Min(255, r))
+;         g := Max(0, Min(255, g))
+;         b := Max(0, Min(255, b))
+
+;         ; recombine
+;         return (a << 24) | (r << 16) | (g << 8) | b
+;     }
+
+;     static GetColorLuminance(color) {
+;         r := (color >> 16) & 0xFF
+;         g := (color >> 8) & 0xFF
+;         b := color & 0xFF
+
+;         ; standard luminance formula
+;         return  (r * 0.299 + g * 0.587 + b * 0.114)
+;     }
+
+;     static GetBrightnessFromRGB(r, g, b) {
+;         return sqrt(0.299 * r ** 2 + 0.587 * g ** 2 + 0.114 * b ** 2)
+;     }
+; }

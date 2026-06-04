@@ -82,17 +82,15 @@ Window.GetNextOnMonitor := (this, MonitorToSwitchTo, activateThenSwitch := true,
  *      Turns out this one doesn't always work either for the above reason.
  *      Future me: this may not be related to games. This also fails sometimes for regular programs.
  */
-Window.FocusNext := (this, monitor := 0, activate_first := true) => this.__Focus('next', monitor, activate_first)
-Window.FocusPrev := (this, monitor := 0, activate_first := true) => this.__Focus('prev', monitor, activate_first)
-Window.Focus     := Window.__Focus
 Window._OnFocus  := (*) => 0
-
 Window.OnFocusHandler := (this, Callback) {
     this._OnFocus := (_, hwnd) => Callback(hwnd)
 }
 
+Window.FocusNext := (this, monitor := 0, activate_first := true) => this.Focus('next', monitor, activate_first)
+Window.FocusPrev := (this, monitor := 0, activate_first := true) => this.Focus('prev', monitor, activate_first)
 
-Window.__Focus := (this, z_order, monitor, activate_first := false) {
+Window.Focus := (this, z_order, monitor, activate_first := false) {
     static prev_order := ''
     static z := 0
     debug := false
@@ -608,7 +606,7 @@ Window.Reposition.Prototype.Right := (this) {
 }
 
 
-Window.Prototype.SnapToScreen := (this, horizontal := 0, vertical := 0) {
+Window.Prototype.SnapToScreenEdge := (this, horizontal := 0, vertical := 0) {
     activeScreen := Screen(Screen.FromWindow(this.hwnd))
 
     if horizontal > 0 {
@@ -623,11 +621,11 @@ Window.Prototype.SnapToScreen := (this, horizontal := 0, vertical := 0) {
         y := activeScreen.bottom - this.height
     }
 
-    this.Move(x?, y?)
+    this.Reposition(x?, y?)
     return this
 }
 
-Window.Prototype.ExpandToScreen := (this, horizontal := 0, vertical := 0) {
+Window.Prototype.ExpandToScreenEdge := (this, horizontal := 0, vertical := 0) {
     activeScreen := Screen(Screen.FromWindow(this.hwnd))
 
     if horizontal > 0 {
