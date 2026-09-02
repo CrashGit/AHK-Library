@@ -202,37 +202,45 @@ IsFunc(FunctionName) {
 
 ;============================================================================================
 ; @Display_Text_On_Screen
-; The use of Critical() is because there was a small chance that if the function was called
-;   twice in a short-enough time, the GUI would get stuck on the screen.
 ;============================================================================================
 Display(text := '', color := 'ebebeb', hide := 1000) {
-    static myGui := () {        ; Create Gui
-        myGui := Gui('+AlwaysOnTop -SysMenu +ToolWindow -Caption -Border')
-        myGui.BackColor := '131313'
-        myGui.MarginX := 0, myGui.MarginY := 4
+    static myGui := ''
+    ; Single static callback reference that destroys the GUI when triggered
+    static hideFunc := () => (IsSet(myGui) && myGui && (myGui.Destroy(), myGui := ''))
 
-        myGui.SetFont('s14 cebebeb')
-        myGui.text := myGui.AddText('w' (A_ScreenWidth*96//A_ScreenDPI)//4 ' Center')
-        myGui.Show('Hide xCenter y-6 NoActivate')
-        FrameShadow(myGui.Hwnd)                     ; mostly used to round corners better and adds a small border for edge visibility
-
-        return myGui
-    }()
-
-    Critical(10)
-    myGui.text.SetFont('c' color)               ; set font color
-    myGui.text.Value := text                    ; set text value
-
-    if text != '' {                             ; if text not empty (without this check, gui disappears when all characters are backspaced)
-        text_size := GetTextSize(myGui.text)    ; get text size
-        myGui.text.Move(,,, text_size.height)   ; set text control height
+    ; Explicit call with empty text destroys the GUI immediately
+    if (text == '') {
+        SetTimer(hideFunc, 0)
+        if myGui {
+            myGui.Destroy()
+            myGui := ''
+        }
+        return
     }
 
-    myGui.Show('AutoSize NoActivate')           ; show gui
-    SetTimer(() => myGui.Hide(), -Abs(hide))    ; hide (or don't) the gui after x ms
+    ; Create a fresh GUI if none currently exists on screen
+    if !myGui || !WinExist(myGui) {
+        myGui := CreateGui()
+    }
+
+    Critical(10)
+    myGui.text.SetFont('c' color)
+    myGui.text.Value := text
+
+    text_size := GetTextSize(myGui.text)
+    myGui.text.Move(,,, text_size.height)
+
+    myGui.Show('AutoSize NoActivate xCenter y-6')
+
+    ; If hide is a positive number, schedule destroy timer. Otherwise, cancel active timers.
+    if (hide != false && hide > 0) {
+        SetTimer(hideFunc, -Abs(hide))
+    } else {
+        SetTimer(hideFunc, 0)
+    }
     Critical(0)
 
-    GetTextSize(textCtrl) {   ; @teadrinker
+    GetTextSize(textCtrl) {
         static WM_GETFONT := 0x0031, DT_CALCRECT := 0x400
         hDC      := DllCall('GetDC', 'Ptr', textCtrl.Hwnd, 'Ptr')
         hPrevObj := DllCall('SelectObject', 'Ptr', hDC, 'Ptr', SendMessage(WM_GETFONT,,, textCtrl), 'Ptr')
@@ -241,26 +249,33 @@ Display(text := '', color := 'ebebeb', hide := 1000) {
 
         DllCall('SelectObject', 'Ptr', hDC, 'Ptr', hPrevObj, 'Ptr')
         DllCall('ReleaseDC', 'Ptr', textCtrl.Hwnd, 'Ptr', hDC)
-        return {width:  Round(width  * 96 / A_ScreenDPI),       ; return width of text object
-                height: Round(height * 96 / A_ScreenDPI)}       ; and height of text object
+        return {width:  Round(width  * 96 / A_ScreenDPI),
+                height: Round(height * 96 / A_ScreenDPI)}
+    }
+
+    CreateGui() {
+        myGui := Gui('+AlwaysOnTop -SysMenu +ToolWindow -Caption -Border')
+        myGui.BackColor := '131313'
+        myGui.MarginX := 0, myGui.MarginY := 4
+        myGui.SetFont('s14 cebebeb')
+        myGui.text := myGui.AddText('w' (A_ScreenWidth * 96 // A_ScreenDPI) // 4 ' Center')
+        FrameShadow(myGui.Hwnd)
+        return myGui
     }
 
     FrameShadow(hwnd) {
-        DllCall('dwmapi.dll\DwmIsCompositionEnabled', 'Int*', &dwmEnabled:=0)
-
-        if !dwmEnabled {
-            DllCall('user32.dll\SetClassLongPtr', 'Ptr', hwnd, 'Int', -26, 'Ptr', DllCall('user32.dll\GetClassLongPtr', 'Ptr', hwnd, 'Int', -26) | 0x20000)
-            return
-        }
-
+        DllCall('dwmapi\DwmSetWindowAttribute', 'Ptr', hwnd, 'Int', 33, 'Int*', 2, 'Int', 4)
         NumPut('Int', 1, 'Int', 1, 'Int', 1, 'Int', 1, margins := Buffer(16, 0))
-        DllCall('dwmapi.dll\DwmSetWindowAttribute', 'Ptr', hwnd, 'Int', 33, 'Int*', 2, 'Int', 4)
-        DllCall('dwmapi.dll\DwmExtendFrameIntoClientArea', 'Ptr', hwnd, 'Ptr', margins)
+        DllCall('dwmapi\DwmExtendFrameIntoClientArea', 'Ptr', hwnd, 'Ptr', margins)
     }
 }
 
 
 FrameShadow(hwnd) {
+    if hwnd is Object && hwnd.HasOwnProp('Hwnd') {
+        hwnd := hwnd.Hwnd
+    }
+
     DllCall('dwmapi.dll\DwmIsCompositionEnabled', 'Int*', &dwmEnabled:=0)
 
     if !dwmEnabled {
