@@ -2103,3 +2103,425 @@ MergeSort(arr) {
 ;         return sqrt(0.299 * r ** 2 + 0.587 * g ** 2 + 0.114 * b ** 2)
 ;     }
 ; }
+
+
+
+
+
+; ============================================================
+; Public entry point — grabs a Steam link + player-support tag
+; for the currently picked game and copies it to the clipboard.
+; ============================================================
+GetSteamInfoForDemoReviews() {
+    appId := SteamGamePicker.Show()
+    if (appId = "") {
+        ToolTip("Cancelled / Not Found")
+        SetTimer(() => ToolTip(), -2000)
+        return
+    }
+
+    steamUrl := "https://store.steampowered.com/app/" . appId . "/"
+    info := SteamAPI.GetAppInfo(appId)
+    result := FormatPlayerAndRating()
+
+    A_Clipboard := result
+    ToolTip("Copied!")
+    SetTimer(() => ToolTip(), -2000)
+
+    FormatPlayerAndRating() {
+        playerSupport := ""
+        if (info.PlayerTag != "")
+            playerSupport .= info.PlayerTag . " "
+        playerSupport .= "``Rating: ``"
+
+        return "# [" . info.Name . "](" . steamUrl . ")`n" . playerSupport . "`n<br><br>"
+    }
+}
+
+; ============================================================
+; SteamAPI — pure Steam data access. No GUI knowledge at all.
+; ============================================================
+class SteamAPI {
+
+    ; Returns an array of {AppId, Name, ImgSrc} for a search term.
+    static Search(query) {
+        results := []
+
+        cleanQuery := RegExReplace(query, "[-–—:]", " ")
+        encoded := SteamAPI.__EncodeURL(cleanQuery)
+        url := "https://store.steampowered.com/search/results/?term=" . encoded . "&f=games&cc=US&l=english"
+
+        html := SteamAPI.__HttpGet(url)
+
+        seen := Map()
+        pos := 1
+        while RegExMatch(html, "s)<a\s[^>]*search_result_row[^>]*>.*?</a>", &rowMatch, pos) {
+            pos := rowMatch.Pos(0) + rowMatch.Len(0)
+            row := rowMatch[0]
+
+            if !RegExMatch(row, 'data-ds-appid="(\d+)"', &idMatch)
+                continue
+            if !RegExMatch(row, '<span class="title">([^<]+)</span>', &titleMatch)
+                continue
+
+            appId := idMatch[1]
+            if seen.Has(appId)
+                continue
+            seen[appId] := true
+
+            name := titleMatch[1]
+            name := StrReplace(name, "&amp;", "&")
+            name := StrReplace(name, "&apos;", "'")
+            name := StrReplace(name, "&quot;", '"')
+            name := StrReplace(name, "&#39;", "'")
+
+            imgSrc := ""
+            if RegExMatch(row, '<img[^>]+src="([^"]+)"', &imgMatch)
+                imgSrc := imgMatch[1]
+            else
+                imgSrc := "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/" . appId . "/capsule_184x69.jpg"
+
+            results.Push({ AppId: appId, Name: name, ImgSrc: imgSrc })
+
+            if results.Length >= 15
+                break
+        }
+
+        return results
+    }
+
+    ; Returns {Name, PlayerTag} for a given app id.
+    static GetAppInfo(appId, fallbackName := "") {
+        try {
+            json := SteamAPI.__HttpGet("https://store.steampowered.com/api/appdetails?appids=" . appId)
+        } catch {
+            return { Name: (fallbackName != "" ? fallbackName : "Selected Game"), PlayerTag: "" }
+        }
+
+        name := fallbackName
+        if RegExMatch(json, '"name"\s*:\s*"([^"]+)"', &nameMatch)
+            name := StrReplace(nameMatch[1], "\u0027", "'")
+        else if (name = "")
+            name := "Selected Game"
+
+        return { Name: name, PlayerTag: SteamAPI.__ParsePlayerSupport(json) }
+    }
+
+    ; ---------------- private ----------------
+
+    static __HttpGet(url) {
+        http := ComObject("WinHttp.WinHttpRequest.5.1")
+        http.SetTimeouts(5000, 5000, 5000, 5000)
+        http.Open("GET", url, false)
+        http.setRequestHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+        http.Send()
+        return http.ResponseText
+    }
+
+    static __EncodeURL(str) {
+        doc := ComObject("htmlfile")
+        doc.write("<meta http-equiv='X-UA-Compatible' content='IE=edge'>")
+        return doc.parentWindow.encodeURIComponent(str)
+    }
+
+    static __ParsePlayerSupport(jsonStr) {
+        hasSingle := false
+        hasPvP := false
+        hasOnlineCoop := false
+        hasLocalCoop := false
+
+        if RegExMatch(jsonStr, '"categories"\s*:\s*\[(.*?)\]', &catMatch) {
+            catArray := catMatch[1]
+
+            ; Steam Category IDs:
+            ; 2  = Single-player
+            ; 1, 36, 37, 49 = Multi-player / Online PvP / PvP
+            ; 38 = Online Co-op
+            ; 24, 39 = Shared/Split Screen Co-op / Local Co-op
+
+            if RegExMatch(catArray, '"id"\s*:\s*2\b')
+                hasSingle := true
+            if RegExMatch(catArray, '"id"\s*:\s*\b(1|36|37|49)\b')
+                hasPvP := true
+            if RegExMatch(catArray, '"id"\s*:\s*\b(38|9)\b')
+                hasOnlineCoop := true
+            if RegExMatch(catArray, '"id"\s*:\s*\b(24|39|44)\b')
+                hasLocalCoop := true
+        }
+
+        tags := []
+        if (hasSingle)
+            tags.Push("Single")
+        if (hasOnlineCoop)
+            tags.Push("Co-op")
+        else if (hasLocalCoop)
+            tags.Push("Local Co-op")
+        if (hasPvP)
+            tags.Push("Multi")
+
+        if (tags.Length = 0)
+            return ""
+
+        tagStr := ""
+        for idx, tag in tags
+            tagStr .= (idx = 1 ? "" : "/") . tag
+
+        return "``Players: " . tagStr . "``"
+    }
+}
+
+; ============================================================
+; SteamGamePicker — the GUI. Depends on SteamAPI, but SteamAPI
+; has no idea this exists. Returns a chosen app id, or "".
+; ============================================================
+class SteamGamePicker {
+
+    static __wb := ""
+    static __activeHwnd := 0
+
+    ; Registered exactly once, ever. Only "live" while __activeHwnd
+    ; matches the currently active window, so nothing needs to be
+    ; turned on/off per Show() call.
+    static __New() {
+        HotIf(ObjBindMethod(SteamGamePicker, "__IsActive"))
+        Hotkey("Enter", ObjBindMethod(SteamGamePicker, "__OnEnter"))
+        Hotkey("Down", ObjBindMethod(SteamGamePicker, "__OnDown"))
+        Hotkey("Up", ObjBindMethod(SteamGamePicker, "__OnUp"))
+        HotIf()
+    }
+
+    static __IsActive(*) {
+        return SteamGamePicker.__activeHwnd != 0 && WinActive("ahk_id " . SteamGamePicker.__activeHwnd)
+    }
+
+    static __OnEnter(*) {
+        if (SteamGamePicker.__wb != "")
+            try SteamGamePicker.__wb.parentWindow.triggerEnter()
+    }
+
+    static __OnDown(*) {
+        if (SteamGamePicker.__wb != "")
+            try SteamGamePicker.__wb.parentWindow.moveSelection(1)
+    }
+
+    static __OnUp(*) {
+        if (SteamGamePicker.__wb != "")
+            try SteamGamePicker.__wb.parentWindow.moveSelection(-1)
+    }
+
+    ; Shows the picker GUI. Blocks until a game is chosen or the
+    ; window is closed/escaped. Returns the chosen app id, or "".
+    static Show(initialQuery := "") {
+        chosenAppId := ""
+        guiClosed := false
+
+        myGui := Gui("+AlwaysOnTop +ToolWindow", "Steam Search")
+        myGui.MarginX := 0
+        myGui.MarginY := 0
+        myGui.OnEvent("Close", (*) => guiClosed := true)
+        myGui.OnEvent("Escape", (*) => guiClosed := true)
+
+        axCtrl := myGui.Add("ActiveX", "w340 h540", "htmlfile")
+        wb := axCtrl.Value
+        wb.write(SteamGamePicker.__BuildHtmlShell())
+
+        if (initialQuery != "")
+            try wb.parentWindow.document.getElementById("search-input").value := initialQuery
+
+        myGui.Show()
+
+        ; Raw .Focus() on the control isn't reliable for this OLE
+        ; object — force real UI-activation with a synthetic click
+        ; first, then hand focus to the input inside the document.
+        ControlClick(axCtrl, myGui)
+        Sleep(50)
+        try wb.parentWindow.document.getElementById("search-input").focus()
+
+        SteamGamePicker.__wb := wb
+        SteamGamePicker.__activeHwnd := myGui.Hwnd
+
+        try {
+            if (initialQuery != "")
+                SteamGamePicker.__RunSearch(wb, initialQuery)
+            else
+                try wb.getElementById("container").innerHTML :=
+                    "<div style='color:#c6d4df; text-align:center; padding-top:40px; font-size:14px;'>Type a game name above.</div>"
+
+            try wb.parentWindow.highlightFirst()
+
+            lastSeenText := initialQuery
+            lastSearchedText := initialQuery
+            lastChangeTime := A_TickCount
+
+            while (WinExist("ahk_id " . myGui.Hwnd) && chosenAppId == "" && !guiClosed) {
+                try currentVal := wb.parentWindow.selectedId
+                catch {
+                    currentVal := ""
+                }
+
+                if (currentVal != "") {
+                    chosenAppId := currentVal
+                    break
+                }
+
+                ; Debounced auto-search, driven entirely from AHK —
+                ; the embedded engine's own JS timers aren't reliable
+                ; here, but polling a COM property every tick is.
+                try text := Trim(wb.parentWindow.document.getElementById("search-input").value)
+                catch {
+                    text := lastSeenText
+                }
+
+                if (text != lastSeenText) {
+                    lastSeenText := text
+                    lastChangeTime := A_TickCount
+                } else if (text != "" && text != lastSearchedText && (A_TickCount - lastChangeTime) >= 450) {
+                    lastSearchedText := text
+                    SteamGamePicker.__RunSearch(wb, text)
+                }
+
+                Sleep(50)
+            }
+        } finally {
+            SteamGamePicker.__activeHwnd := 0
+            SteamGamePicker.__wb := ""
+            ToolTip()
+            if WinExist("ahk_id " . myGui.Hwnd)
+                myGui.Destroy()
+        }
+
+        return chosenAppId
+    }
+
+    ; ---------------- private ----------------
+
+    static __RunSearch(wb, query) {
+        ToolTip("Fetching Steam Data...")
+        try {
+            results := SteamAPI.Search(query)
+            html := SteamGamePicker.__BuildResultsHtml(results)
+        } catch {
+            html := "<div style='color:#c6d4df; text-align:center; padding-top:40px; font-size:14px;'>Request Failed / Timed Out</div>"
+        }
+        ToolTip()
+
+        try wb.getElementById("container").innerHTML := html
+        try wb.parentWindow.highlightFirst()
+    }
+
+    static __BuildResultsHtml(results) {
+        if (results.Length = 0)
+            return "<div style='color:#c6d4df; text-align:center; padding-top:40px; font-size:14px;'>No games found.</div>"
+
+        html := ""
+        for game in results {
+            html .= "<div class='game-card' onclick='selectApp(" . game.AppId . ")'>"
+            html .= "<div class='img-box'><img src='" . game.ImgSrc . "' onerror='this.style.display=`"none`";'></div>"
+            html .= "<div class='title-wrap'><div class='title'>" . game.Name . "</div></div>"
+            html .= "<div style='clear:both;'></div>"
+            html .= "</div>"
+        }
+        return html
+    }
+
+    static __BuildHtmlShell() {
+        return "
+        (
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <meta http-equiv='X-UA-Compatible' content='IE=edge'>
+        <style>
+            * { box-sizing: border-box; }
+            html, body { background: #1b2838; color: #fff; font-family: sans-serif; margin: 0; padding: 0; overflow: hidden; width: 100%; height: 100%; }
+
+            #search-bar-container { background: #171a21; padding: 10px; border-bottom: 1px solid #2a475e; position: fixed; top: 0; left: 0; width: 100%; z-index: 10; }
+            #search-input { width: 100%; padding: 7px 10px; background: #0b0e14; border: 1px solid #2a475e; color: #fff; border-radius: 4px; font-size: 14px; outline: none; }
+            #search-input:focus { border-color: #66c0f4; }
+
+            #container { position: absolute; top: 55px; bottom: 0; left: 0; width: 100%; overflow-y: auto; text-align: center; padding: 10px 0; }
+
+            .game-card { background: #171a21; margin: 0 auto 10px auto; padding: 10px; border-radius: 6px; cursor: pointer; border: 1px solid #2a475e; width: 310px; text-align: left; zoom: 1; transition: background 0.1s, border-color 0.1s; }
+            .game-card:hover, .game-card.keyboard-focus { background: #2a475e; border-color: #66c0f4; }
+
+            .img-box { float: left; width: 130px; height: 60px; background: #0b0e14; border-radius: 3px; margin-right: 12px; overflow: hidden; position: relative; }
+            img { width: 130px; height: 60px; object-fit: cover; display: block; }
+
+            .title-wrap { float: left; width: 144px; height: 60px; display: table; }
+            .title { display: table-cell; vertical-align: middle; font-size: 15px; font-weight: bold; color: #c6d4df; line-height: 1.2; word-break: break-word; }
+        </style>
+        </head>
+        <body>
+            <div id='search-bar-container'>
+                <input type='text' id='search-input' placeholder='Search Steam...' autocomplete='off' />
+            </div>
+            <div id='container'></div>
+            <script>
+        )" . SteamGamePicker.__BuildScript() . "
+        (
+            </script>
+        </body>
+        </html>
+        )"
+    }
+
+    ; Isolated on its own so it's easy to edit without wading
+    ; through the HTML/CSS template around it.
+    static __BuildScript() {
+        return "
+        (
+            var selectedId = '';
+            var currentIndex = -1;
+
+            function selectApp(id) {
+                selectedId = id.toString();
+            }
+
+            function moveSelection(direction) {
+                try {
+                    var cards = document.querySelectorAll('.game-card');
+                    if (cards.length === 0) return;
+
+                    if (currentIndex < 0) {
+                        currentIndex = 0;
+                    } else if (direction === 1) {
+                        currentIndex = (currentIndex + 1 < cards.length) ? currentIndex + 1 : 0;
+                    } else {
+                        currentIndex = (currentIndex - 1 >= 0) ? currentIndex - 1 : cards.length - 1;
+                    }
+
+                    setFocusIndex(currentIndex);
+                } catch(e) {}
+            }
+
+            function triggerEnter() {
+                try {
+                    var cards = document.querySelectorAll('.game-card');
+                    if (cards.length === 0) return;
+                    var idx = (currentIndex >= 0 && currentIndex < cards.length) ? currentIndex : 0;
+                    cards[idx].click();
+                } catch(e) {}
+            }
+
+            function setFocusIndex(idx) {
+                var cards = document.querySelectorAll('.game-card');
+                for (var i = 0; i < cards.length; i++) {
+                    cards[i].className = (i === idx) ? 'game-card keyboard-focus' : 'game-card';
+                }
+                if (cards[idx]) cards[idx].scrollIntoView();
+                currentIndex = idx;
+            }
+
+            function highlightFirst() {
+                var cards = document.querySelectorAll('.game-card');
+                currentIndex = (cards.length > 0) ? 0 : -1;
+                if (cards.length > 0) setFocusIndex(0);
+            }
+
+            window.onload = function() {
+                var input = document.getElementById('search-input');
+                if (input) input.focus();
+            };
+        )"
+    }
+}
