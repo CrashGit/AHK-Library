@@ -30,7 +30,7 @@ Hotkey.DefineProp('OnceLazy',
     {Call: (this, key, Callback, options?) {
         this(key, (ThisHotkey) {
             this(key, 'Off')
-            Callback?.(ThisHotkey)
+            (Callback?)(ThisHotkey)
         }, options?)
 
         this(key ' up', (*) {
@@ -49,12 +49,12 @@ Hotkey.DefineProp('NoRepeat',
     {Call: (this, key, DownCallback?, downOptions?, UpCallback?, upOptions?) {
         this(key, (ThisHotkey) {
             this(key, 'Off')
-            DownCallback?.(ThisHotkey)
+            (DownCallback?)(ThisHotkey)
         }, downOptions?)
 
         this(key ' up', (ThisHotkey) {
             this(key, 'On')
-            UpCallback?.(ThisHotkey)
+            (UpCallback?)(ThisHotkey)
         }, upOptions?)
     }
 })

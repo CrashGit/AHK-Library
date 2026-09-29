@@ -26,6 +26,7 @@ Keyboard.Layer.DefineProp('enabled', {
         if this.activated && GetKeyState(this.modifier, 'P') {
             return this._layer
         }
+        return false
     },
     Set: (this, value) {
         this._layer := value

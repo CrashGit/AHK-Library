@@ -195,7 +195,7 @@ class Monitor {
 
         temp := []                                                          ; array to store monitor order (type: int)
         loop MonitorGetCount() {                                            ; loop amount equal to monitors found
-            index := sortingFunction?.(A_Index) ?? A_Index                  ; if sorting function is supplied, sort monitors
+            index := (sortingFunction?)(A_Index) ?? A_Index                 ; if sorting function is supplied, sort monitors
             coords := this.__GetMonitorCoordinates(index)                   ; coords of monitor/screen
 
             this.DefineProp(A_Index, {Get: ((idx, *) => idx).Bind(index)})  ; save logical position of monitor to computer-assigned number

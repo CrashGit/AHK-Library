@@ -306,19 +306,19 @@ Mouse.Gesture.DirectionalDrag := (this, xDistance, yDistance, UpCallback?, DownC
         switch {
         ; mouse moved right enough distance
         case final_xPos > initial_xPos and x_distance_moved and !y_distance_moved:
-            RightCallback?.()
+            (RightCallback?)()
 
         ; mouse moved left enough distance
         case final_xPos < initial_xPos and x_distance_moved and !y_distance_moved:
-            LeftCallback?.()
+            (LeftCallback?)()
 
         ; mouse moved up enough distance
         case final_yPos < initial_yPos and y_distance_moved and !x_distance_moved:
-            UpCallback?.()
+            (UpCallback?)()
 
         ; mouse moved down enough distance
         case final_yPos > initial_yPos and y_distance_moved and !x_distance_moved:
-            DownCallback?.()
+            (DownCallback?)()
 
         default: return false
         }
@@ -552,6 +552,7 @@ Mouse.Layer.DefineProp('enabled', {
         if Keyboard.Layer.activated and GetKeyState(Keyboard.Layer.modifier, 'P') {
             return this._layer.Get(this._layer_index)
         }
+        return false
     }
 })
 

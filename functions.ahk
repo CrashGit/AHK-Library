@@ -2112,7 +2112,7 @@ MergeSort(arr) {
 ; Public entry point — grabs a Steam link + player-support tag
 ; for the currently picked game and copies it to the clipboard.
 ; ============================================================
-GetSteamInfoForDemoReviews() {
+GetTemplateForDemoReviews() {
     appId := SteamGamePicker.Show()
     if (appId = "") {
         ToolTip("Cancelled / Not Found")
@@ -2122,24 +2122,24 @@ GetSteamInfoForDemoReviews() {
 
     steamUrl := "https://store.steampowered.com/app/" . appId . "/"
     info := SteamAPI.GetAppInfo(appId)
-    result := FormatPlayerAndRating()
+    result := FormatTemplate()
 
     A_Clipboard := result
     ToolTip("Copied!")
     SetTimer(() => ToolTip(), -2000)
 
-    FormatPlayerAndRating() {
-        playerSupport := ""
-        if (info.PlayerTag != "")
-            playerSupport .= info.PlayerTag . " "
-        playerSupport .= "``Rating: ``"
-
-        return "# [" . info.Name . "](" . steamUrl . ")`n" . playerSupport . "`n<br><br>"
+    FormatTemplate() {
+        verdict := "### ``Verdict: ``"
+        playerSupport := '*``Players: ' info.PlayerTag '``*'
+        access := '*``Access: Demo``*'
+        release := '*``Release: ' info.Release '``*'
+        notes := '- '
+        return Format("# [{1}]({2})`n{3}`n{4} {5} {6}`n{7}`n<br><br>", info.Name, steamUrl, verdict, playerSupport, access, release, notes)
     }
 }
 
 ; ============================================================
-; SteamAPI — pure Steam data access. No GUI knowledge at all.
+; SteamAPI
 ; ============================================================
 class SteamAPI {
 
@@ -2190,10 +2190,10 @@ class SteamAPI {
         return results
     }
 
-    ; Returns {Name, PlayerTag} for a given app id.
+    ; Returns {Name, PlayerTag, Release} for a given app id.
     static GetAppInfo(appId, fallbackName := "") {
         try {
-            json := SteamAPI.__HttpGet("https://store.steampowered.com/api/appdetails?appids=" . appId)
+            json := SteamAPI.__HttpGet("https://store.steampowered.com/api/appdetails?appids=" . appId "&l=english")
         } catch {
             return { Name: (fallbackName != "" ? fallbackName : "Selected Game"), PlayerTag: "" }
         }
@@ -2204,7 +2204,7 @@ class SteamAPI {
         else if (name = "")
             name := "Selected Game"
 
-        return { Name: name, PlayerTag: SteamAPI.__ParsePlayerSupport(json) }
+        return { Name: name, PlayerTag: SteamAPI.__ParsePlayerSupport(json), Release: SteamAPI.__ParseReleaseDate(json) }
     }
 
     ; ---------------- private ----------------
@@ -2224,38 +2224,58 @@ class SteamAPI {
         return doc.parentWindow.encodeURIComponent(str)
     }
 
+    static __ParseReleaseDate(jsonStr) {
+        if RegExMatch(jsonStr, '"release_date"\s*:\s*\{[^}]*?"date"\s*:\s*"([^"]+)"', &dateMatch) {
+            ; 1. Remove escaped slashes (\/ -> / or space)
+            cleanDate := StrReplace(dateMatch[1], "\/", " ")
+
+            ; Swap day and month to match American date format
+            if RegExMatch(cleanDate, "i)^(\d{1,2})\s+([a-z]+)[,\s]+(\d{4})$", &m) {
+                return m[2] " " m[1] ", " m[3]
+            }
+
+            return cleanDate
+        }
+        return ""
+    }
+
     static __ParsePlayerSupport(jsonStr) {
         hasSingle := false
         hasPvP := false
         hasOnlineCoop := false
-        hasLocalCoop := false
+        hasCouchCoop := false
 
         if RegExMatch(jsonStr, '"categories"\s*:\s*\[(.*?)\]', &catMatch) {
             catArray := catMatch[1]
 
             ; Steam Category IDs:
             ; 2  = Single-player
-            ; 1, 36, 37, 49 = Multi-player / Online PvP / PvP
+            ; 1, 36 = Multi-player / Online PvP
             ; 38 = Online Co-op
-            ; 24, 39 = Shared/Split Screen Co-op / Local Co-op
+            ; 39 = Shared/Split Screen Co-op
 
             if RegExMatch(catArray, '"id"\s*:\s*2\b')
                 hasSingle := true
-            if RegExMatch(catArray, '"id"\s*:\s*\b(1|36|37|49)\b')
-                hasPvP := true
-            if RegExMatch(catArray, '"id"\s*:\s*\b(38|9)\b')
+            if RegExMatch(catArray, '"id"\s*:\s*\b(38)\b')
                 hasOnlineCoop := true
-            if RegExMatch(catArray, '"id"\s*:\s*\b(24|39|44)\b')
-                hasLocalCoop := true
+            if RegExMatch(catArray, '"id"\s*:\s*\b(39)\b')
+                hasCouchCoop := true
+
+            if RegExMatch(catArray, '"id"\s*:\s*\b(36)\b')
+                hasPvP := true
+            else if (RegExMatch(catArray, '"id"\s*:\s*1\b') && !hasOnlineCoop && !hasCouchCoop) ; this check exists because CS2 only returned categories 1 and 27 (Multi-player and Cross-Platform Multiplayer) so if I included 1 in all checks, Co-op games without PvP would return it has Multi (PvP).
+                hasPvP := true
         }
 
         tags := []
         if (hasSingle)
             tags.Push("Single")
+
         if (hasOnlineCoop)
             tags.Push("Co-op")
-        else if (hasLocalCoop)
-            tags.Push("Local Co-op")
+        else if (hasCouchCoop)
+            tags.Push("Couch Co-op")
+
         if (hasPvP)
             tags.Push("Multi")
 
@@ -2266,13 +2286,13 @@ class SteamAPI {
         for idx, tag in tags
             tagStr .= (idx = 1 ? "" : "/") . tag
 
-        return "``Players: " . tagStr . "``"
+        return tagStr
     }
 }
 
 ; ============================================================
-; SteamGamePicker — the GUI. Depends on SteamAPI, but SteamAPI
-; has no idea this exists. Returns a chosen app id, or "".
+; SteamGamePicker — the GUI. Depends on SteamAPI.
+; Returns a chosen app id, or "".
 ; ============================================================
 class SteamGamePicker {
 
@@ -2375,7 +2395,7 @@ class SteamGamePicker {
                 if (text != lastSeenText) {
                     lastSeenText := text
                     lastChangeTime := A_TickCount
-                } else if (text != "" && text != lastSearchedText && (A_TickCount - lastChangeTime) >= 450) {
+                } else if (text != "" && text != lastSearchedText && (A_TickCount - lastChangeTime) >= 250) {
                     lastSearchedText := text
                     SteamGamePicker.__RunSearch(wb, text)
                 }
@@ -2465,8 +2485,7 @@ class SteamGamePicker {
         )"
     }
 
-    ; Isolated on its own so it's easy to edit without wading
-    ; through the HTML/CSS template around it.
+    ; Isolated on its own so it's easy to edit without wading through the HTML/CSS template around it.
     static __BuildScript() {
         return "
         (
