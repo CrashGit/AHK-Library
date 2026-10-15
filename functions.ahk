@@ -2129,12 +2129,13 @@ GetTemplateForDemoReviews() {
     SetTimer(() => ToolTip(), -2000)
 
     FormatTemplate() {
-        verdict := "### ``Verdict: ``"
+        verdict := '#### ``Verdict: ``'
+        release := '``Release: ' info.Release '``'
         playerSupport := '*``Players: ' info.PlayerTag '``*'
         access := '*``Access: Demo``*'
-        release := '*``Release: ' info.Release '``*'
+        played := '*``Played: ' A_MMM ' ' A_DD ', ' A_YYYY ' ``*'
         notes := '- '
-        return Format("# [{1}]({2})`n{3}`n{4} {5} {6}`n{7}`n<br><br>", info.Name, steamUrl, verdict, playerSupport, access, release, notes)
+        return Format("## [{1}]({2})`n{3} {4}`n{5} {6} {7}`n{8}`n<br><br>", info.Name, steamUrl, verdict, release, playerSupport, access, played, notes)
     }
 }
 
@@ -2284,7 +2285,7 @@ class SteamAPI {
 
         tagStr := ""
         for idx, tag in tags
-            tagStr .= (idx = 1 ? "" : "/") . tag
+            tagStr .= (idx = 1 ? "" : " | ") . tag
 
         return tagStr
     }
