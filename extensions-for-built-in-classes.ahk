@@ -44,6 +44,7 @@ Hotkey.DefineProp('OnceLazy',
  * Fail two possible ways depending on how it's setup (can't remember exact setup for each failure):
  * 1: No error, doesn't work. A MsgBox earlier in the script didn't run either, very strange.
  * 2: Class that was defined below it at the time said that classes can't be defined inside functions.
+ * This might have been fixed since then since it was early in function definition expression's existence
  */
 Hotkey.DefineProp('NoRepeat',
     {Call: (this, key, DownCallback?, downOptions?, UpCallback?, upOptions?) {
